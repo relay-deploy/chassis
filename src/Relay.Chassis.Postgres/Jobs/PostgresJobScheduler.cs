@@ -1,5 +1,4 @@
 using System.Text.Json;
-using Dapper;
 using Microsoft.Extensions.Options;
 using Relay.Chassis.Postgres.Sessions;
 
@@ -16,7 +15,6 @@ public sealed class PostgresJobScheduler(PostgresSession session, IOptions<JobOp
     public async Task Schedule<TJob>(TJob job, string idempotencyKey, CancellationToken cancellationToken)
         where TJob : IJob
     {
-        var transaction = await session.Transaction(cancellationToken).ConfigureAwait(false);
         var parameters = new
         {
             id = Guid.CreateVersion7(),
@@ -26,6 +24,6 @@ public sealed class PostgresJobScheduler(PostgresSession session, IOptions<JobOp
             now = time.GetUtcNow(),
             maxAttempts = options.Value.MaxAttempts,
         };
-        await transaction.Connection!.ExecuteAsync(new CommandDefinition(ScheduleSql, parameters, transaction, cancellationToken: cancellationToken)).ConfigureAwait(false);
+        await session.Execute(ScheduleSql, parameters, cancellationToken).ConfigureAwait(false);
     }
 }
