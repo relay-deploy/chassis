@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Text.Json;
 using Dapper;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using Npgsql;
 using Relay.Chassis.Hosting;
@@ -16,6 +17,7 @@ public static class PostgresRegistration
     public static IServiceCollection AddRelayPostgres(this IServiceCollection services, Assembly migrations)
     {
         DefaultTypeMap.MatchNamesWithUnderscores = true;
+        services.TryAddSingleton(TimeProvider.System);
 
         services.AddOptions<PostgresOptions>().BindConfiguration(PostgresOptions.Section).ValidateDataAnnotations().ValidateOnStart();
         services.AddOptions<JobOptions>().BindConfiguration(JobOptions.Section).ValidateDataAnnotations().ValidateOnStart();
@@ -40,11 +42,11 @@ public static class PostgresRegistration
         where THandler : class, IJobHandler<TJob>
     {
         services.AddScoped<THandler>();
-        services.AddSingleton(new JobRegistration(TJob.Kind, (provider, payload, cancellationToken) =>
+        services.AddSingleton(new JobRegistration(TJob.Kind, (provider, payload, attempt, cancellationToken) =>
         {
             var job = JsonSerializer.Deserialize<TJob>(payload, JobSerialization.Options)
                 ?? throw new JsonException($"Job payload for {TJob.Kind} is empty.");
-            return provider.GetRequiredService<THandler>().Handle(job, cancellationToken);
+            return provider.GetRequiredService<THandler>().Handle(job, attempt, cancellationToken);
         }));
         return services;
     }

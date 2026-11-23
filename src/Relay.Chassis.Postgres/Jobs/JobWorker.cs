@@ -83,7 +83,7 @@ public sealed partial class JobWorker(
         await using var scope = scopes.CreateAsyncScope();
         try
         {
-            return await registration.Run(scope.ServiceProvider, job.Payload, stoppingToken).ConfigureAwait(false);
+            return await registration.Run(scope.ServiceProvider, job.Payload, new JobAttempt(job.Attempts, job.MaxAttempts), stoppingToken).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {

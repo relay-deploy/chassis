@@ -6,10 +6,10 @@ namespace Relay.Chassis.Grpc;
 
 public static class GrpcClients
 {
-    public static IHttpClientBuilder AddRelayGrpcClient<TClient>(this IServiceCollection services, Uri address)
+    public static IHttpClientBuilder AddRelayGrpcClient<TClient>(this IServiceCollection services, Func<IServiceProvider, Uri> address)
         where TClient : class =>
         services
-            .AddGrpcClient<TClient>(options => options.Address = address)
+            .AddGrpcClient<TClient>((provider, options) => options.Address = address(provider))
             .ConfigureChannel(channel => channel.ServiceConfig = new ServiceConfig { MethodConfigs = { RetryWhenUnavailable() } });
 
     private static MethodConfig RetryWhenUnavailable() => new()
