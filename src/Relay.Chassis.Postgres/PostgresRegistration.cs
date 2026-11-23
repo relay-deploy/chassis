@@ -1,39 +1,29 @@
-using System.Reflection;
 using System.Text.Json;
-using Dapper;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Npgsql;
 using Relay.Chassis.Hosting;
 using Relay.Chassis.Postgres.Jobs;
-using Relay.Chassis.Postgres.Migrations;
-using Relay.Chassis.Postgres.Sessions;
 
 namespace Relay.Chassis.Postgres;
 
 public static class PostgresRegistration
 {
-    public static IServiceCollection AddRelayPostgres(this IServiceCollection services, Assembly migrations)
+    public static IServiceCollection AddRelayPostgres<TContext>(this IServiceCollection services, string schema)
+        where TContext : DbContext, IJobContext
     {
-        DefaultTypeMap.MatchNamesWithUnderscores = true;
         services.TryAddSingleton(TimeProvider.System);
-
+        services.AddLogging(logging => logging.AddFilter(DbLoggerCategory.Database.Command.Name, LogLevel.Warning));
         services.AddOptions<PostgresOptions>().BindConfiguration(PostgresOptions.Section).ValidateDataAnnotations().ValidateOnStart();
         services.AddOptions<JobOptions>().BindConfiguration(JobOptions.Section).ValidateDataAnnotations().ValidateOnStart();
-        services.AddSingleton(provider =>
-        {
-            var options = provider.GetRequiredService<IOptions<PostgresOptions>>().Value;
-            var connection = new NpgsqlConnectionStringBuilder(options.ConnectionString) { SearchPath = options.Schema };
-            return new NpgsqlDataSourceBuilder(connection.ConnectionString).Build();
-        });
-        services.AddSingleton(new MigrationSource(typeof(PostgresRegistration).Assembly));
-        services.AddSingleton(new MigrationSource(migrations));
-        services.AddHostedService<SchemaMigrator>();
-        services.AddScoped<PostgresSession>();
-        services.AddScoped<IJobScheduler, PostgresJobScheduler>();
-        services.AddHostedService<JobWorker>();
-        services.AddHealthChecks().AddCheck<PostgresReadiness>("postgres", tags: [ServiceDefaults.ReadinessTag]);
+        services.AddDbContext<TContext>((provider, builder) =>
+            builder.UseRelayPostgres(provider.GetRequiredService<IOptions<PostgresOptions>>().Value.ConnectionString, schema));
+        services.AddHostedService<DatabaseMigrator<TContext>>();
+        services.AddScoped<IJobScheduler, EfJobScheduler<TContext>>();
+        services.AddHostedService<JobWorker<TContext>>();
+        services.AddHealthChecks().AddCheck<PostgresReadiness<TContext>>("postgres", tags: [ServiceDefaults.ReadinessTag]);
         return services;
     }
 
@@ -50,4 +40,7 @@ public static class PostgresRegistration
         }));
         return services;
     }
+
+    public static ModelBuilder AddRelayJobs(this ModelBuilder modelBuilder) =>
+        modelBuilder.ApplyConfiguration(new JobRecordConfiguration());
 }

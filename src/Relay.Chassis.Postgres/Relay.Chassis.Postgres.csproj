@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <IsPackable>true</IsPackable>
-    <Description>Postgres plumbing shared by every relay .NET service: schema migrations, a unit-of-work session and a durable job queue.</Description>
+    <Description>Postgres plumbing shared by every relay .NET service, on EF Core: database setup, migrations on startup, readiness and a durable job queue.</Description>
   </PropertyGroup>
 
   <ItemGroup>
@@ -9,16 +9,13 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Dapper" />
-    <PackageReference Include="Npgsql" />
+    <PackageReference Include="EFCore.NamingConventions" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="../Relay.Chassis/Relay.Chassis.csproj" />
     <ProjectReference Include="../Relay.Chassis.Primitives/Relay.Chassis.Primitives.csproj" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <EmbeddedResource Include="Migrations/Scripts/*.sql" LogicalName="migrations/%(Filename)%(Extension)" />
   </ItemGroup>
 </Project>

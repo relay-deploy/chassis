@@ -1,21 +1,13 @@
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
-using Npgsql;
 
 namespace Relay.Chassis.Postgres;
 
-public sealed class PostgresReadiness(NpgsqlDataSource dataSource) : IHealthCheck
+public sealed class PostgresReadiness<TContext>(TContext database) : IHealthCheck
+    where TContext : DbContext
 {
-    public async Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext context, CancellationToken cancellationToken = default)
-    {
-        try
-        {
-            await using var command = dataSource.CreateCommand("SELECT 1");
-            await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
-            return HealthCheckResult.Healthy();
-        }
-        catch (NpgsqlException exception)
-        {
-            return HealthCheckResult.Unhealthy("Postgres is unreachable.", exception);
-        }
-    }
+    public async Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext context, CancellationToken cancellationToken = default) =>
+        await database.Database.CanConnectAsync(cancellationToken).ConfigureAwait(false)
+            ? HealthCheckResult.Healthy()
+            : HealthCheckResult.Unhealthy("Postgres is unreachable.");
 }

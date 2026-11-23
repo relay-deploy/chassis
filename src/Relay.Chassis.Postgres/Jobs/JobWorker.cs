@@ -1,38 +1,20 @@
-using Dapper;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Npgsql;
 using Relay.Chassis.Primitives;
 
 namespace Relay.Chassis.Postgres.Jobs;
 
-public sealed partial class JobWorker(
-    NpgsqlDataSource dataSource,
-    IEnumerable<JobRegistration> registrations,
+public sealed partial class JobWorker<TContext>(
     IServiceScopeFactory scopes,
+    IEnumerable<JobRegistration> registrations,
     IOptions<JobOptions> options,
     TimeProvider time,
-    ILogger<JobWorker> logger) : BackgroundService
+    ILogger<JobWorker<TContext>> logger) : BackgroundService
+    where TContext : DbContext, IJobContext
 {
-    private const string ClaimSql = """
-        UPDATE job SET locked_until = @now + @lease, attempts = attempts + 1
-        WHERE id = (
-            SELECT id FROM job
-            WHERE failed_at IS NULL AND run_at <= @now AND (locked_until IS NULL OR locked_until < @now)
-            ORDER BY run_at
-            FOR UPDATE SKIP LOCKED
-            LIMIT 1)
-        RETURNING id, kind, payload::text AS payload, attempts, max_attempts
-        """;
-
-    private const string CompleteSql = "DELETE FROM job WHERE id = @id";
-
-    private const string RetrySql = "UPDATE job SET run_at = @runAt, locked_until = NULL, last_error = @error WHERE id = @id";
-
-    private const string FailSql = "UPDATE job SET failed_at = @now, locked_until = NULL, last_error = @error WHERE id = @id";
-
     private readonly Dictionary<string, JobRegistration> handlers = registrations.ToDictionary(registration => registration.Kind);
 
     protected override Task ExecuteAsync(CancellationToken stoppingToken) =>
@@ -54,26 +36,53 @@ public sealed partial class JobWorker(
     {
         try
         {
-            await using var connection = await dataSource.OpenConnectionAsync(stoppingToken).ConfigureAwait(false);
-            var job = await connection.QuerySingleOrDefaultAsync<ClaimedJob>(new CommandDefinition(
-                ClaimSql, new { now = time.GetUtcNow(), lease = options.Value.Lease }, cancellationToken: stoppingToken)).ConfigureAwait(false);
+            await using var scope = scopes.CreateAsyncScope();
+            var context = scope.ServiceProvider.GetRequiredService<TContext>();
+            var job = await Claim(context, stoppingToken).ConfigureAwait(false);
             if (job is null)
             {
                 return false;
             }
 
-            var outcome = await Run(job, stoppingToken).ConfigureAwait(false);
-            await Settle(connection, job, outcome, stoppingToken).ConfigureAwait(false);
+            var attempt = new JobAttempt(job.Attempts + 1, job.MaxAttempts);
+            var outcome = await Run(job, attempt, stoppingToken).ConfigureAwait(false);
+            await Settle(context, job, attempt, outcome, stoppingToken).ConfigureAwait(false);
             return true;
         }
-        catch (NpgsqlException exception)
+        catch (Exception exception) when (PostgresFailures.IsUnavailable(exception))
         {
             LogDatabaseUnavailable(exception.Message);
             return false;
         }
     }
 
-    private async Task<Result> Run(ClaimedJob job, CancellationToken stoppingToken)
+    private async Task<JobRecord?> Claim(TContext context, CancellationToken stoppingToken)
+    {
+        var now = time.GetUtcNow();
+        var candidate = await context.Jobs
+            .AsNoTracking()
+            .Where(job => job.FailedAt == null && job.RunAt <= now && (job.LockedUntil == null || job.LockedUntil < now))
+            .OrderBy(job => job.RunAt)
+            .FirstOrDefaultAsync(stoppingToken)
+            .ConfigureAwait(false);
+        if (candidate is null)
+        {
+            return null;
+        }
+
+        var lockedUntil = now + options.Value.Lease;
+        var claimed = await context.Jobs
+            .Where(job => job.Id == candidate.Id && job.Attempts == candidate.Attempts && (job.LockedUntil == null || job.LockedUntil < now))
+            .ExecuteUpdateAsync(
+                job => job
+                    .SetProperty(record => record.LockedUntil, lockedUntil)
+                    .SetProperty(record => record.Attempts, record => record.Attempts + 1),
+                stoppingToken)
+            .ConfigureAwait(false);
+        return claimed == 1 ? candidate : null;
+    }
+
+    private async Task<Result> Run(JobRecord job, JobAttempt attempt, CancellationToken stoppingToken)
     {
         if (!handlers.TryGetValue(job.Kind, out var registration))
         {
@@ -83,7 +92,7 @@ public sealed partial class JobWorker(
         await using var scope = scopes.CreateAsyncScope();
         try
         {
-            return await registration.Run(scope.ServiceProvider, job.Payload, new JobAttempt(job.Attempts, job.MaxAttempts), stoppingToken).ConfigureAwait(false);
+            return await registration.Run(scope.ServiceProvider, job.Payload, attempt, stoppingToken).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -92,30 +101,41 @@ public sealed partial class JobWorker(
         }
     }
 
-    private async Task Settle(NpgsqlConnection connection, ClaimedJob job, Result outcome, CancellationToken stoppingToken)
+    private async Task Settle(TContext context, JobRecord job, JobAttempt attempt, Result outcome, CancellationToken stoppingToken)
     {
+        var jobs = context.Jobs.Where(record => record.Id == job.Id);
         if (outcome.IsSuccess)
         {
-            await connection.ExecuteAsync(new CommandDefinition(CompleteSql, new { id = job.Id }, cancellationToken: stoppingToken)).ConfigureAwait(false);
+            await jobs.ExecuteDeleteAsync(stoppingToken).ConfigureAwait(false);
             return;
         }
 
         var error = $"{outcome.Error.Code}: {outcome.Error.Message}";
-        var retryable = outcome.Error.Kind == ErrorKind.Unavailable && job.Attempts < job.MaxAttempts;
-        if (retryable)
+        if (outcome.Error.Kind == ErrorKind.Unavailable && !attempt.IsLast)
         {
-            var runAt = time.GetUtcNow() + Backoff(job.Attempts);
-            await connection.ExecuteAsync(new CommandDefinition(RetrySql, new { id = job.Id, runAt, error }, cancellationToken: stoppingToken)).ConfigureAwait(false);
-            LogJobRetrying(job.Kind, job.Id, job.Attempts, error, runAt);
+            var runAt = time.GetUtcNow() + Backoff(attempt.Number);
+            await jobs.ExecuteUpdateAsync(
+                record => record
+                    .SetProperty(column => column.RunAt, runAt)
+                    .SetProperty(column => column.LockedUntil, (DateTimeOffset?)null)
+                    .SetProperty(column => column.LastError, error),
+                stoppingToken).ConfigureAwait(false);
+            LogJobRetrying(job.Kind, job.Id, attempt.Number, error, runAt);
             return;
         }
 
-        await connection.ExecuteAsync(new CommandDefinition(FailSql, new { id = job.Id, now = time.GetUtcNow(), error }, cancellationToken: stoppingToken)).ConfigureAwait(false);
-        LogJobFailed(job.Kind, job.Id, job.Attempts, error);
+        var failedAt = time.GetUtcNow();
+        await jobs.ExecuteUpdateAsync(
+            record => record
+                .SetProperty(column => column.FailedAt, failedAt)
+                .SetProperty(column => column.LockedUntil, (DateTimeOffset?)null)
+                .SetProperty(column => column.LastError, error),
+            stoppingToken).ConfigureAwait(false);
+        LogJobFailed(job.Kind, job.Id, attempt.Number, error);
     }
 
-    private TimeSpan Backoff(int attempts) =>
-        TimeSpan.FromSeconds(Math.Min(Math.Pow(2, attempts), options.Value.MaxBackoff.TotalSeconds));
+    private TimeSpan Backoff(int attempt) =>
+        TimeSpan.FromSeconds(Math.Min(Math.Pow(2, attempt), options.Value.MaxBackoff.TotalSeconds));
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Job queue cannot reach the database: {Reason}")]
     private partial void LogDatabaseUnavailable(string reason);
