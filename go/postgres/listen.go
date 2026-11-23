@@ -8,7 +8,7 @@ import (
 )
 
 func Listen(ctx context.Context, pool *pgxpool.Pool, channel string, wake chan<- struct{}) error {
-	if err := ValidSchema(channel); err != nil {
+	if err := validChannel(channel); err != nil {
 		return err
 	}
 	connection, err := pool.Acquire(ctx)

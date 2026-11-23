@@ -8,12 +8,29 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+var keywords = map[string]string{
+	"host":     "host",
+	"port":     "port",
+	"username": "user",
+	"user id":  "user",
+	"password": "password",
+	"database": "dbname",
+	"ssl mode": "sslmode",
+}
+
+var sslModes = map[string]string{
+	"disable":    "disable",
+	"allow":      "allow",
+	"prefer":     "prefer",
+	"require":    "require",
+	"verifyca":   "verify-ca",
+	"verifyfull": "verify-full",
+}
+
+var libpqEscaper = strings.NewReplacer(`\`, `\\`, `'`, `\'`)
+
 func parseConnectionString(connectionString, schema string) (*pgxpool.Config, error) {
-	config, err := pgxpool.ParseConfig("")
-	if err != nil {
-		return nil, err
-	}
-	sslMode := ""
+	var settings []string
 	for _, pair := range strings.Split(connectionString, ";") {
 		if strings.TrimSpace(pair) == "" {
 			continue
@@ -23,36 +40,36 @@ func parseConnectionString(connectionString, schema string) (*pgxpool.Config, er
 			return nil, fmt.Errorf("connection string part '%s' is not Key=Value", strings.TrimSpace(pair))
 		}
 		key = strings.ToLower(strings.TrimSpace(key))
-		value = strings.TrimSpace(value)
-		switch key {
-		case "host":
-			config.ConnConfig.Host = value
-		case "port":
-			port, err := strconv.ParseUint(value, 10, 16)
-			if err != nil {
-				return nil, fmt.Errorf("connection string port '%s' is invalid", value)
-			}
-			config.ConnConfig.Port = uint16(port)
-		case "username", "user id":
-			config.ConnConfig.User = value
-		case "password":
-			config.ConnConfig.Password = value
-		case "database":
-			config.ConnConfig.Database = value
-		case "ssl mode":
-			sslMode = strings.ToLower(strings.ReplaceAll(value, " ", "-"))
-		default:
+		keyword, supported := keywords[key]
+		if !supported {
 			return nil, fmt.Errorf("connection string key '%s' is not supported", key)
 		}
-	}
-	if sslMode != "" {
-		withMode, err := pgxpool.ParseConfig(fmt.Sprintf("sslmode=%s host=%s", sslMode, config.ConnConfig.Host))
+		translated, err := translate(keyword, strings.TrimSpace(value))
 		if err != nil {
-			return nil, fmt.Errorf("connection string SSL Mode '%s' is invalid: %w", sslMode, err)
+			return nil, err
 		}
-		config.ConnConfig.TLSConfig = withMode.ConnConfig.TLSConfig
-		config.ConnConfig.Fallbacks = withMode.ConnConfig.Fallbacks
+		settings = append(settings, keyword+"='"+libpqEscaper.Replace(translated)+"'")
+	}
+	config, err := pgxpool.ParseConfig(strings.Join(settings, " "))
+	if err != nil {
+		return nil, err
 	}
 	config.ConnConfig.RuntimeParams["search_path"] = schema
 	return config, nil
+}
+
+func translate(keyword, value string) (string, error) {
+	switch keyword {
+	case "port":
+		if _, err := strconv.ParseUint(value, 10, 16); err != nil {
+			return "", fmt.Errorf("connection string port '%s' is invalid", value)
+		}
+	case "sslmode":
+		mode, known := sslModes[strings.ToLower(strings.ReplaceAll(value, " ", ""))]
+		if !known {
+			return "", fmt.Errorf("connection string SSL Mode '%s' is not supported", value)
+		}
+		return mode, nil
+	}
+	return value, nil
 }

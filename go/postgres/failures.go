@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net"
@@ -10,7 +11,7 @@ import (
 )
 
 func IsUnavailable(err error) bool {
-	if err == nil {
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
 	}
 	var connectError *pgconn.ConnectError
