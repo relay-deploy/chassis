@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <IsPackable>true</IsPackable>
-    <Description>Postgres plumbing shared by every relay .NET service, on EF Core: database setup, migrations on startup, readiness and a durable job queue.</Description>
+    <Description>Postgres plumbing shared by every relay .NET service, on EF Core: database setup, migrations on startup, readiness, a durable job queue and an event outbox with subscriptions.</Description>
   </PropertyGroup>
 
   <ItemGroup>
@@ -10,6 +10,7 @@
 
   <ItemGroup>
     <PackageReference Include="EFCore.NamingConventions" />
+    <PackageReference Include="Google.Protobuf" />
     <PackageReference Include="Microsoft.EntityFrameworkCore" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
   </ItemGroup>
