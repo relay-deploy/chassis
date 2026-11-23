@@ -2,6 +2,7 @@ package hosting
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -27,13 +28,15 @@ func Run(logger *slog.Logger, components ...Component) int {
 		group.Add(1)
 		go func() {
 			defer group.Done()
-			if err := component.Run(ctx); err != nil {
-				logger.Error("Component failed", "component", component.Name, "error", err)
-				lock.Lock()
-				failed = true
-				lock.Unlock()
-				cancel()
+			err := component.Run(ctx)
+			if err == nil || (ctx.Err() != nil && errors.Is(err, context.Canceled)) {
+				return
 			}
+			logger.Error("Component failed", "component", component.Name, "error", err)
+			lock.Lock()
+			failed = true
+			lock.Unlock()
+			cancel()
 		}()
 	}
 	group.Wait()
