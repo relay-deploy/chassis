@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <Description>Result and error primitives shared by every relay service.</Description>
+  </PropertyGroup>
+</Project>
