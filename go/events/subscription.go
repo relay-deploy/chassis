@@ -86,6 +86,8 @@ func (s *subscription) consume(ctx context.Context, wake <-chan struct{}) error 
 		case err == nil:
 			delay.reset()
 			wait(ctx, wake, s.options.FallbackPoll)
+		case errors.Is(err, errCursorMoved):
+			continue
 		case errors.As(err, &stalled):
 			pause := delay.next()
 			s.reportStalled(stalled, pause)
@@ -111,7 +113,11 @@ func (s *subscription) drain(ctx context.Context, delay *backoff) error {
 			return err
 		}
 		for _, event := range batch {
-			if err := s.process(ctx, event); err != nil {
+			err := s.process(ctx, event)
+			if errors.Is(err, errCursorMoved) {
+				return err
+			}
+			if err != nil {
 				return &stalledEvent{event: event, cause: err}
 			}
 			delay.reset()
@@ -156,15 +162,28 @@ func (s *subscription) process(ctx context.Context, event Event) error {
 	if !fault.IsRejection(err) {
 		return err
 	}
-	s.logger.Error(fmt.Sprintf("Handler for %s rejected event %s (%s), skipping it", event.Type, event.ID, err))
-	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+	return s.skip(ctx, event, err)
+}
+
+func (s *subscription) skip(ctx context.Context, event Event, rejection error) error {
+	if err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		return s.advance(ctx, tx, event)
-	})
+	}); err != nil {
+		return err
+	}
+	s.logger.Error(fmt.Sprintf("Handler for %s rejected event %s (%s), skipped it", event.Type, event.ID, rejection))
+	return nil
 }
 
 func (s *subscription) advance(ctx context.Context, tx pgx.Tx, event Event) error {
-	_, err := tx.Exec(ctx, s.advanceCursor, s.source, event.TransactionID, event.Sequence)
-	return err
+	tag, err := tx.Exec(ctx, s.advanceCursor, s.source, event.TransactionID, event.Sequence)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return errCursorMoved
+	}
+	return nil
 }
 
 func (s *subscription) reportStalled(stalled *stalledEvent, pause time.Duration) {
@@ -175,6 +194,8 @@ func (s *subscription) reportStalled(stalled *stalledEvent, pause time.Duration)
 	}
 	s.logger.Error(message)
 }
+
+var errCursorMoved = errors.New("the cursor was advanced by another instance")
 
 type stalledEvent struct {
 	event Event

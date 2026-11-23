@@ -32,9 +32,10 @@ func cursorSQL(consumer string) string {
 }
 
 func advanceSQL(consumer string) string {
-	return `INSERT INTO ` + pgx.Identifier{consumer, cursorTable}.Sanitize() + ` (source, transaction_id, sequence)
+	return `INSERT INTO ` + pgx.Identifier{consumer, cursorTable}.Sanitize() + ` AS stored (source, transaction_id, sequence)
 VALUES ($1, $2, $3)
-ON CONFLICT (source) DO UPDATE SET transaction_id = excluded.transaction_id, sequence = excluded.sequence`
+ON CONFLICT (source) DO UPDATE SET transaction_id = excluded.transaction_id, sequence = excluded.sequence
+WHERE (stored.transaction_id, stored.sequence) < (excluded.transaction_id, excluded.sequence)`
 }
 
 func isSourceMissing(err error) bool {
