@@ -31,6 +31,11 @@ func Dial(address string) (*grpc.ClientConn, error) {
 		grpc.WithDefaultServiceConfig(serviceConfig))
 }
 
+func ValidAddress(address string) error {
+	_, err := targetOf(address)
+	return err
+}
+
 func targetOf(address string) (string, error) {
 	parsed, err := url.Parse(address)
 	if err != nil || parsed.Scheme != "http" || parsed.Hostname() == "" || parsed.Port() == "" ||

@@ -59,6 +59,30 @@ func (r *Reader) Duration(key string, fallback time.Duration) time.Duration {
 	return parsed
 }
 
+func (r *Reader) PositiveDuration(key string, fallback time.Duration) time.Duration {
+	value := r.Duration(key, fallback)
+	if value <= 0 {
+		r.problems = append(r.problems, fmt.Sprintf("%s must be above zero", key))
+		return fallback
+	}
+	return value
+}
+
+func (r *Reader) Port(key string, fallback int) int {
+	value := r.Int(key, fallback)
+	if value < 1 || value > 65535 {
+		r.problems = append(r.problems, fmt.Sprintf("%s must be a port from 1 to 65535", key))
+		return fallback
+	}
+	return value
+}
+
+func (r *Reader) Check(key string, err error) {
+	if err != nil {
+		r.problems = append(r.problems, fmt.Sprintf("%s: %s", key, err))
+	}
+}
+
 func (r *Reader) List(key string, fallback []string) []string {
 	value := os.Getenv(key)
 	if value == "" {
