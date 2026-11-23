@@ -2,17 +2,17 @@ namespace Relay.Chassis.Primitives;
 
 public sealed class Result<T> : Result
 {
-    private readonly T? _value;
+    private readonly T? value;
 
     internal Result(T value)
-        : base(null) => _value = value;
+        : base(null) => this.value = value;
 
     internal Result(Error error)
         : base(error)
     {
     }
 
-    public T Value => IsSuccess ? _value! : throw new InvalidOperationException("A failed result has no value.");
+    public T Value => IsSuccess ? value! : throw new InvalidOperationException("A failed result has no value.");
 
     public static implicit operator Result<T>(T value) => new(value);
 
