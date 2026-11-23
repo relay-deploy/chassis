@@ -20,14 +20,19 @@ func Listen(ctx context.Context, pool *pgxpool.Pool, channel string, wake chan<-
 	if _, err := conn.Exec(ctx, "listen "+pgx.Identifier{channel}.Sanitize()); err != nil {
 		return stopOrFail(ctx, err)
 	}
+	ring(wake)
 	for {
 		if _, err := conn.WaitForNotification(ctx); err != nil {
 			return stopOrFail(ctx, err)
 		}
-		select {
-		case wake <- struct{}{}:
-		default:
-		}
+		ring(wake)
+	}
+}
+
+func ring(wake chan<- struct{}) {
+	select {
+	case wake <- struct{}{}:
+	default:
 	}
 }
 
