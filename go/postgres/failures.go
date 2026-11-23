@@ -14,6 +14,10 @@ func IsUnavailable(err error) bool {
 	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
 	}
+	var pgError *pgconn.PgError
+	if errors.As(err, &pgError) {
+		return isUnavailableCode(pgError.Code)
+	}
 	var connectError *pgconn.ConnectError
 	if errors.As(err, &connectError) {
 		return true
@@ -22,16 +26,13 @@ func IsUnavailable(err error) bool {
 	if errors.As(err, &networkError) {
 		return true
 	}
-	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
-		return true
-	}
-	var pgError *pgconn.PgError
-	if errors.As(err, &pgError) {
-		return strings.HasPrefix(pgError.Code, "08") ||
-			pgError.Code == "57P01" ||
-			pgError.Code == "57P02" ||
-			pgError.Code == "57P03" ||
-			pgError.Code == "53300"
-	}
-	return false
+	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
+}
+
+func isUnavailableCode(code string) bool {
+	return strings.HasPrefix(code, "08") ||
+		code == "57P01" ||
+		code == "57P02" ||
+		code == "57P03" ||
+		code == "53300"
 }
