@@ -10,6 +10,8 @@ import (
 	"syscall"
 )
 
+var errStoppedEarly = errors.New("it stopped before shutdown began")
+
 type Component struct {
 	Name string
 	Run  func(ctx context.Context) error
@@ -29,8 +31,11 @@ func Run(logger *slog.Logger, components ...Component) int {
 		go func() {
 			defer group.Done()
 			err := component.Run(ctx)
-			if err == nil || (ctx.Err() != nil && errors.Is(err, context.Canceled)) {
+			if ctx.Err() != nil && (err == nil || errors.Is(err, context.Canceled)) {
 				return
+			}
+			if err == nil {
+				err = errStoppedEarly
 			}
 			logger.Error("Component failed", "component", component.Name, "error", err)
 			lock.Lock()
