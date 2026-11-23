@@ -1,10 +1,20 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <IsPackable>true</IsPackable>
-    <Description>Service defaults shared by every relay .NET service: structured JSON logging and health endpoints.</Description>
+    <Description>Service defaults shared by every relay .NET service: structured JSON logging, health endpoints and gRPC.</Description>
   </PropertyGroup>
 
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Grpc.AspNetCore.Server" />
+    <PackageReference Include="Grpc.Net.ClientFactory" />
+    <PackageReference Include="Grpc.StatusProto" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Relay.Chassis.Primitives/Relay.Chassis.Primitives.csproj" />
   </ItemGroup>
 </Project>
