@@ -1,5 +1,6 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/Relay.Chassis.Postgres/Relay.Chassis.Postgres.csproj" />
     <Project Path="src/Relay.Chassis.Primitives/Relay.Chassis.Primitives.csproj" />
     <Project Path="src/Relay.Chassis/Relay.Chassis.csproj" />
   </Folder>
