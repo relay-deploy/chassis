@@ -2,19 +2,19 @@ namespace Relay.Chassis.Primitives;
 
 public class Result
 {
-    private static readonly Result Succeeded = new(null);
+    private static readonly Result succeeded = new(null);
 
-    private readonly Error? _error;
+    private readonly Error? error;
 
-    protected Result(Error? error) => _error = error;
+    protected Result(Error? error) => this.error = error;
 
-    public bool IsSuccess => _error is null;
+    public bool IsSuccess => error is null;
 
     public bool IsFailure => !IsSuccess;
 
-    public Error Error => _error ?? throw new InvalidOperationException("A successful result has no error.");
+    public Error Error => error ?? throw new InvalidOperationException("A successful result has no error.");
 
-    public static Result Success() => Succeeded;
+    public static Result Success() => succeeded;
 
     public static Result<T> Success<T>(T value) => new(value);
 
